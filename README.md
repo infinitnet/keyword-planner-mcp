@@ -5,7 +5,8 @@ Simple installation steps:
 4. uv sync
 
 ensure you edit the claude configuration to :
-```"Keyword Planner": {
+```
+"Keyword Planner": {
             "command": "uv",
             "args": [
                 "--directory",
