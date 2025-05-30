@@ -1,0 +1,5 @@
+fastmcp[cli]
+google-ads
+python-dotenv
+tabulate 
+pandas
