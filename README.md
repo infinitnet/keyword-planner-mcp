@@ -1,8 +1,9 @@
 Simple installation steps:
-1. clone the repo 
-2. in the directory of the folder : pip install uv ( if you dont have it already)
-3. uv venv
-4. uv sync
+1. Clone or Download the zip
+2. Ensure you place your .env file with credentials in the same folder
+4. In the directory of the folder : pip install uv ( if you dont have it already)
+5. uv venv
+6. uv sync
 
 ensure you edit the claude configuration to :
 ```
