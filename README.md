@@ -5,7 +5,7 @@ Simple installation steps:
 4. uv sync
 
 ensure you edit the claude configuration to :
-"Keyword Planner": {
+```"Keyword Planner": {
             "command": "uv",
             "args": [
                 "--directory",
@@ -14,5 +14,6 @@ ensure you edit the claude configuration to :
                 "google_ads_server.py"
             ]
         }
+```
 
 then you can open claude and query.
