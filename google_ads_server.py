@@ -355,9 +355,9 @@ async def get_keyword_ideas_mcp(
     Returns:
         Markdown string with keyword data or an error message.
     """
-    # Set default location to India instead of New York
+    # Set default location to United States
     if locations is None:
-        locations = ["India"]
+        locations = ["United States"]
 
     final_customer_id = customer_id if customer_id else LINKED_CUSTOMER_ID
 
@@ -458,9 +458,9 @@ async def get_historical_keyword_data(
     Returns:
         Markdown string with historical keyword data or an error message.
     """
-    # Set default location to India
+    # Set default location to United States
     if locations is None:
-        locations = ["India"]
+        locations = ["United States"]
 
     final_customer_id = customer_id if customer_id else LINKED_CUSTOMER_ID
 
@@ -572,9 +572,9 @@ async def get_month_over_month_analysis(
     Returns:
         Markdown string with month-over-month analysis or an error message.
     """
-    # Set default location to India
+    # Set default location to United States
     if locations is None:
-        locations = ["India"]
+        locations = ["United States"]
 
     final_customer_id = customer_id if customer_id else LINKED_CUSTOMER_ID
 
@@ -648,6 +648,101 @@ async def get_month_over_month_analysis(
             response += "\n```"
 
         logger.info(f"Successfully returned month-over-month analysis for {len(keyword_texts_list)} keywords")
+        return response
+
+    except GoogleAdsException as ex:
+        error_msg = f"Google Ads API Error: {str(ex.error.code)} - {ex.error.message}"
+        logger.error(error_msg)
+        return error_msg
+    except Exception as e:
+        error_msg = f"An unexpected error occurred: {str(e)}"
+        logger.error(error_msg)
+        return error_msg
+
+@app.tool()
+async def get_keyword_search_volumes(
+    keywords: str,
+    locations: Optional[List[str]] = None,
+    customer_id: Optional[str] = None,
+    language_id: Optional[str] = "1000",
+    export_csv: Optional[bool] = False
+) -> str:
+    """
+    Get average monthly search volume for each keyword (past 12 months).
+    
+    Args:
+        keywords: Comma-separated list of keywords to analyze.
+        locations: A list of location names to target.
+        customer_id: Google Ads customer ID.
+        language_id: The language ID (default '1000' for English).
+        export_csv: Whether to include CSV export in response (default False).
+    
+    Returns:
+        Simple table with keyword and average monthly search volume.
+    """
+    # Set default location to United States
+    if locations is None:
+        locations = ["United States"]
+
+    final_customer_id = customer_id if customer_id else LINKED_CUSTOMER_ID
+
+    if not final_customer_id:
+        logger.error("No customer ID provided")
+        return "Error: Customer ID is required."
+
+    # Validate and sanitize inputs
+    keyword_texts_list = sanitize_keywords(keywords)
+    if not keyword_texts_list:
+        return "Error: Valid keywords are required."
+
+    # Validate locations
+    selected_location_ids, location_error = validate_locations(locations)
+    if location_error:
+        logger.error(f"Location validation failed: {location_error}")
+        return location_error
+
+    try:
+        googleads_client = GoogleAdsClient.load_from_dict(CREDENTIALS)
+        googleads_client.login_customer_id = CREDENTIALS["login_customer_id"]
+
+        # Get historical metrics
+        historical_response = generate_historical_metrics(
+            googleads_client,
+            final_customer_id,
+            selected_location_ids,
+            language_id,
+            keyword_texts_list
+        )
+
+        # Extract average monthly searches directly from API response
+        results = []
+        for result in historical_response.results:
+            keyword = result.text
+            avg_monthly_searches = result.keyword_metrics.avg_monthly_searches
+            results.append({
+                "keyword": keyword,
+                "avg_monthly_searches": avg_monthly_searches
+            })
+
+        if not results:
+            logger.warning("No search volume data found")
+            return "No search volume data found for the specified keywords."
+
+        df = pd.DataFrame(results)
+        df_sorted = df.sort_values(by="avg_monthly_searches", ascending=False)
+        
+        response = f"## Keyword Search Volumes (12-Month Average)\n\n"
+        response += f"**Keywords:** {', '.join(keyword_texts_list)}\n"
+        response += f"**Locations:** {', '.join(locations)}\n"
+        response += f"**Total Keywords:** {len(df_sorted)}\n\n"
+        response += df_sorted.to_markdown(index=False)
+        
+        if export_csv:
+            response += "\n\n## CSV Export\n\n```csv\n"
+            response += export_to_csv(df_sorted, "keyword_search_volumes")
+            response += "\n```"
+
+        logger.info(f"Successfully returned search volumes for {len(keyword_texts_list)} keywords")
         return response
 
     except GoogleAdsException as ex:
