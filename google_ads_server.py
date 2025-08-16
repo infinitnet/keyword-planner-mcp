@@ -451,30 +451,44 @@ async def get_keyword_ideas_mcp(
 
         if keyword_ideas:
             results = []
+            all_concept_groups = []  # Store concept groups for all keywords
+            
             for idea in keyword_ideas:
                 competition_value = str(idea.keyword_idea_metrics.competition)
                 
                 # Extract SEO-focused data
                 concept_groups = extract_concept_annotation(idea) if include_concept_grouping else ["general"]
+                all_concept_groups.append(concept_groups)
                 
                 # Extract CPC data for commercial value analysis
                 low_cpc = idea.keyword_idea_metrics.low_top_of_page_bid_micros / 1_000_000 if idea.keyword_idea_metrics.low_top_of_page_bid_micros else 0
                 high_cpc = idea.keyword_idea_metrics.high_top_of_page_bid_micros / 1_000_000 if idea.keyword_idea_metrics.high_top_of_page_bid_micros else 0
                 
-                # Build base result
+                # Build base result (without concept columns yet)
                 result = {
                     "keyword": idea.text,
                     "avg_monthly_searches": idea.keyword_idea_metrics.avg_monthly_searches,
                     "low_cpc": round(low_cpc, 2),
                     "high_cpc": round(high_cpc, 2),
-                    "concept_group": " › ".join(concept_groups)  # Keep legacy format for summary
+                    "concept_group": " › ".join(concept_groups),  # Keep legacy format for summary
+                    "concept_groups_list": concept_groups  # Store the list for dynamic column creation
                 }
                 
-                # Add individual concept columns
-                for i, concept in enumerate(concept_groups):
-                    result[f"concept_{i+1}"] = concept
-                
                 results.append(result)
+
+            # Find the maximum number of concepts across all keywords
+            max_concepts = max(len(concepts) for concepts in all_concept_groups) if all_concept_groups else 1
+            
+            # Add dynamic concept columns based on the maximum found
+            for i, result in enumerate(results):
+                concept_groups = result["concept_groups_list"]
+                for j in range(max_concepts):
+                    if j < len(concept_groups):
+                        result[f"concept_{j+1}"] = concept_groups[j]
+                    else:
+                        result[f"concept_{j+1}"] = ""  # Fill with empty string if no concept at this position
+                # Remove the temporary concept_groups_list
+                del result["concept_groups_list"]
 
             df = pd.DataFrame(results)
             df_sorted = df.sort_values(by="avg_monthly_searches", ascending=False).head(result_limit)
