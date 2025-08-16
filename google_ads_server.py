@@ -487,6 +487,9 @@ async def get_keyword_ideas_mcp(
                 }).round(2)
                 concept_cpc_analysis.columns = ['avg_high_cpc', 'max_high_cpc', 'avg_low_cpc', 'total_search_volume']
                 
+                # Calculate Traffic Value (total volume * avg cpc)
+                concept_cpc_analysis['traffic_value'] = (concept_cpc_analysis['total_search_volume'] * concept_cpc_analysis['avg_high_cpc']).round(2)
+                
                 # Sort by total search volume descending
                 concept_cpc_analysis = concept_cpc_analysis.sort_values('total_search_volume', ascending=False)
                 
@@ -497,14 +500,16 @@ async def get_keyword_ideas_mcp(
                 for concept in concept_cpc_analysis.index:
                     count = concept_summary[concept]
                     cpc_data = concept_cpc_analysis.loc[concept]
-                    response += f"- **{concept}:** {count} keywords | Avg CPC: ${cpc_data['avg_high_cpc']:.2f} | Max CPC: ${cpc_data['max_high_cpc']:.2f} | Total Volume: {int(cpc_data['total_search_volume']):,}\n"
+                    response += f"- **{concept}:** {count} keywords | Avg CPC: ${cpc_data['avg_high_cpc']:.2f} | Max CPC: ${cpc_data['max_high_cpc']:.2f} | Total Volume: {int(cpc_data['total_search_volume']):,} | Traffic Value: ${cpc_data['traffic_value']:,.2f}\n"
                 
                 # Identify highest value concept groups
                 if len(concept_cpc_analysis) > 1:
-                    highest_value_concept = concept_cpc_analysis['avg_high_cpc'].idxmax()
+                    highest_value_concept = concept_cpc_analysis['traffic_value'].idxmax()
                     highest_volume_concept = concept_cpc_analysis['total_search_volume'].idxmax()
-                    response += f"\n**Highest Commercial Value:** {highest_value_concept} (${concept_cpc_analysis.loc[highest_value_concept]['avg_high_cpc']:.2f} avg CPC)\n"
+                    highest_cpc_concept = concept_cpc_analysis['avg_high_cpc'].idxmax()
+                    response += f"\n**Highest Commercial Value:** {highest_value_concept} (${concept_cpc_analysis.loc[highest_value_concept]['traffic_value']:,.2f} traffic value)\n"
                     response += f"**Highest Search Volume:** {highest_volume_concept} ({int(concept_cpc_analysis.loc[highest_volume_concept]['total_search_volume']):,} total searches)\n"
+                    response += f"**Highest CPC:** {highest_cpc_concept} (${concept_cpc_analysis.loc[highest_cpc_concept]['avg_high_cpc']:.2f} avg CPC)\n"
             
             if export_csv:
                 response += "\n\n## CSV Export\n\n```csv\n"
