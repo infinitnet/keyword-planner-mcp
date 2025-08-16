@@ -453,6 +453,7 @@ async def get_keyword_ideas_mcp(
             results = []
             all_concept_groups = []  # Store concept groups for all keywords
             
+            # First pass: collect all data and concept groups
             for idea in keyword_ideas:
                 competition_value = str(idea.keyword_idea_metrics.competition)
                 
@@ -479,14 +480,14 @@ async def get_keyword_ideas_mcp(
             # Find the maximum number of concepts across all keywords
             max_concepts = max(len(concepts) for concepts in all_concept_groups) if all_concept_groups else 1
             
-            # Add dynamic concept columns based on the maximum found
-            for i, result in enumerate(results):
+            # Second pass: add dynamic concept columns based on the maximum found
+            for result in results:
                 concept_groups = result["concept_groups_list"]
+                
+                # Add dynamic concept columns
                 for j in range(max_concepts):
-                    if j < len(concept_groups):
-                        result[f"concept_{j+1}"] = concept_groups[j]
-                    else:
-                        result[f"concept_{j+1}"] = ""  # Fill with empty string if no concept at this position
+                    result[f"concept_{j+1}"] = concept_groups[j] if j < len(concept_groups) else ""
+                
                 # Remove the temporary concept_groups_list
                 del result["concept_groups_list"]
 
