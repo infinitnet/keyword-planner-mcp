@@ -145,13 +145,20 @@ def extract_concept_annotation(idea):
                         concept_names.append(concept.name.strip())
                 
                 if concept_names:
-                    # Return all concept names joined together
-                    return " › ".join(concept_names)
+                    # Return list of concept names instead of joined string
+                    return concept_names
         
-        return "general"
+        return ["general"]
     except Exception as e:
         logger.error(f"Error extracting concept annotation for '{idea.text}': {e}")
-        return "general"
+        return ["general"]
+
+def extract_concept_annotation_legacy(idea):
+    """Extract concept names as joined string for backward compatibility"""
+    concepts = extract_concept_annotation(idea)
+    if isinstance(concepts, list):
+        return " › ".join(concepts)
+    return concepts
 
 # Removed classify_keyword_type - redundant since concept groups show actual brand names
 # Removed extract_competitor_annotation - not reliable without brand context
@@ -388,20 +395,21 @@ async def get_keyword_ideas_mcp(
 ) -> str:
     """
     Generates SEO-focused keyword ideas from Google Ads Keyword Planner with semantic clustering.
+    Uses credentials from environment variables (LOGIN_CUSTOMER_ID, DEVELOPER_TOKEN, etc.).
 
     Args:
-        keywords: Comma-separated list of keywords.
-        page_url: A URL to generate keyword ideas from.
-        competitor_url: A competitor website URL to analyze for keyword opportunities (optional).
-        locations: A list of location names to target.
-        customer_id: Google Ads customer ID.
-        language_id: The language ID (default '1000' for English).
-        result_limit: Number of top results to return (default is 100).
-        include_concept_grouping: Whether to include semantic concept grouping (default True).
-        export_csv: Whether to include CSV export in response (default False).
+        keywords: Comma-separated seed keywords (up to 50, max 100 chars each).
+        page_url: Website URL to analyze for keyword suggestions.
+        competitor_url: Competitor website URL for competitive keyword analysis.
+        locations: List of location names to target (defaults to ["United States"]).
+        customer_id: Override customer ID (defaults to LOGIN_CUSTOMER_ID from environment).
+        language_id: Language targeting ID (default "1000" for English).
+        result_limit: Maximum keywords to return, 1-100 (default 100).
+        include_concept_grouping: Include semantic concept clustering (default True).
+        export_csv: Include CSV format in response (default False).
 
     Returns:
-        Markdown string with SEO-focused keyword data or an error message.
+        Markdown-formatted keyword data with search volumes, CPC, and concept groups.
     """
     # Set default location to United States
     if locations is None:
@@ -447,22 +455,42 @@ async def get_keyword_ideas_mcp(
                 competition_value = str(idea.keyword_idea_metrics.competition)
                 
                 # Extract SEO-focused data
-                concept_group = extract_concept_annotation(idea) if include_concept_grouping else "general"
+                concept_groups = extract_concept_annotation(idea) if include_concept_grouping else ["general"]
                 
                 # Extract CPC data for commercial value analysis
                 low_cpc = idea.keyword_idea_metrics.low_top_of_page_bid_micros / 1_000_000 if idea.keyword_idea_metrics.low_top_of_page_bid_micros else 0
                 high_cpc = idea.keyword_idea_metrics.high_top_of_page_bid_micros / 1_000_000 if idea.keyword_idea_metrics.high_top_of_page_bid_micros else 0
                 
-                results.append({
+                # Build base result
+                result = {
                     "keyword": idea.text,
                     "avg_monthly_searches": idea.keyword_idea_metrics.avg_monthly_searches,
                     "low_cpc": round(low_cpc, 2),
                     "high_cpc": round(high_cpc, 2),
-                    "concept_group": concept_group
-                })
+                    "concept_group": " › ".join(concept_groups)  # Keep legacy format for summary
+                }
+                
+                # Add individual concept columns
+                for i, concept in enumerate(concept_groups):
+                    result[f"concept_{i+1}"] = concept
+                
+                results.append(result)
 
             df = pd.DataFrame(results)
             df_sorted = df.sort_values(by="avg_monthly_searches", ascending=False).head(result_limit)
+            
+            # Reorganize columns for better display - concept columns first, then metrics
+            base_columns = ["keyword", "avg_monthly_searches", "low_cpc", "high_cpc"]
+            concept_columns = [col for col in df_sorted.columns if col.startswith("concept_") and col != "concept_group"]
+            other_columns = [col for col in df_sorted.columns if col not in base_columns + concept_columns + ["concept_group"]]
+            
+            # Reorder columns: keyword, concept columns, then metrics
+            display_columns = ["keyword"] + concept_columns + ["avg_monthly_searches", "low_cpc", "high_cpc"] + other_columns
+            df_display = df_sorted[display_columns].copy()
+            
+            # Fill NaN values in concept columns with empty strings for cleaner display
+            for col in concept_columns:
+                df_display[col] = df_display[col].fillna("")
             
             response = f"## SEO Keyword Ideas Results\n\n"
             if limit_warning:
@@ -472,10 +500,10 @@ async def get_keyword_ideas_mcp(
             if competitor_url:
                 response += f"**Competitor Analysis:** {competitor_url}\n"
             response += f"**Total Results:** {len(df_sorted)}\n"
-            response += f"**Note:** Semantic concept grouping available via KEYWORD_CONCEPT annotation\n"
+            response += f"**Note:** Individual concept groups displayed in separate columns\n"
             
             response += "\n"
-            response += df_sorted.to_markdown(index=False)
+            response += df_display.to_markdown(index=False)
             
             # Add concept grouping summary with commercial value analysis
             if include_concept_grouping and len(df_sorted) > 0:
@@ -541,18 +569,19 @@ async def get_historical_keyword_data(
     export_csv: Optional[bool] = False
 ) -> str:
     """
-    Gets 24-month historical search volume data for keywords with month-over-month analysis.
+    Retrieves 24-month historical search volume data with time-series analysis.
+    Uses credentials from environment variables (LOGIN_CUSTOMER_ID, DEVELOPER_TOKEN, etc.).
 
     Args:
-        keywords: Comma-separated list of keywords to analyze.
-        locations: A list of location names to target.
-        customer_id: Google Ads customer ID.
-        language_id: The language ID (default '1000' for English).
-        format_type: Return format - 'summary' for monthly totals, 'detailed' for all data, 'pivot' for pivot table.
-        export_csv: Whether to include CSV export in response (default False).
+        keywords: Comma-separated keywords to analyze (required, up to 50 keywords).
+        locations: List of location names to target (defaults to ["United States"]).
+        customer_id: Override customer ID (defaults to LOGIN_CUSTOMER_ID from environment).
+        language_id: Language targeting ID (default "1000" for English).
+        format_type: Output format - "summary", "detailed", or "pivot" (default "summary").
+        export_csv: Include CSV format in response (default False).
 
     Returns:
-        Markdown string with historical keyword data or an error message.
+        Markdown-formatted historical data with monthly search volumes and trends.
     """
     # Set default location to United States
     if locations is None:
@@ -656,17 +685,18 @@ async def get_month_over_month_analysis(
     export_csv: Optional[bool] = False
 ) -> str:
     """
-    Performs month-over-month analysis showing percentage changes and trends.
+    Analyzes month-over-month search volume changes with percentage calculations and trends.
+    Uses credentials from environment variables (LOGIN_CUSTOMER_ID, DEVELOPER_TOKEN, etc.).
 
     Args:
-        keywords: Comma-separated list of keywords to analyze.
-        locations: A list of location names to target.
-        customer_id: Google Ads customer ID.
-        language_id: The language ID (default '1000' for English).
-        export_csv: Whether to include CSV export in response (default False).
+        keywords: Comma-separated keywords to analyze (required, up to 50 keywords).
+        locations: List of location names to target (defaults to ["United States"]).
+        customer_id: Override customer ID (defaults to LOGIN_CUSTOMER_ID from environment).
+        language_id: Language targeting ID (default "1000" for English).
+        export_csv: Include CSV format in response (default False).
 
     Returns:
-        Markdown string with month-over-month analysis or an error message.
+        Markdown-formatted analysis with monthly changes, percentages, and trend insights.
     """
     # Set default location to United States
     if locations is None:
@@ -764,17 +794,18 @@ async def get_keyword_search_volumes(
     export_csv: Optional[bool] = False
 ) -> str:
     """
-    Get average monthly search volume for each keyword (past 12 months).
+    Retrieves 12-month average search volumes for keywords in a simple format.
+    Uses credentials from environment variables (LOGIN_CUSTOMER_ID, DEVELOPER_TOKEN, etc.).
     
     Args:
-        keywords: Comma-separated list of keywords to analyze.
-        locations: A list of location names to target.
-        customer_id: Google Ads customer ID.
-        language_id: The language ID (default '1000' for English).
-        export_csv: Whether to include CSV export in response (default False).
+        keywords: Comma-separated keywords to analyze (required, up to 50 keywords).
+        locations: List of location names to target (defaults to ["United States"]).
+        customer_id: Override customer ID (defaults to LOGIN_CUSTOMER_ID from environment).
+        language_id: Language targeting ID (default "1000" for English).
+        export_csv: Include CSV format in response (default False).
     
     Returns:
-        Simple table with keyword and average monthly search volume.
+        Markdown table with keywords and their average monthly search volumes.
     """
     # Set default location to United States
     if locations is None:
@@ -853,10 +884,11 @@ async def get_keyword_search_volumes(
 @app.tool()
 async def list_available_locations() -> str:
     """
-    Lists all available location options for targeting.
+    Lists all supported location names and IDs for geographic targeting.
+    Includes countries and major cities with their corresponding Google Ads location IDs.
 
     Returns:
-        Markdown string with available locations.
+        Markdown-formatted table of available locations organized by countries and cities.
     """
     try:
         locations_df = pd.DataFrame(list(LOCATION_OPTIONS.items()), columns=['Location Name', 'Location ID'])
