@@ -193,7 +193,7 @@ def generate_keyword_ideas_core(client, customer_id, location_ids, language_id, 
         logger.info("Successfully generated keyword ideas")
         return keyword_ideas
     except GoogleAdsException as ex:
-        error_msg = f"Google Ads API Error: {ex.error.code.name} - {ex.error.message}"
+        error_msg = f"Google Ads API Error: {str(ex.error.code)} - {ex.error.message}"
         logger.error(error_msg)
         return None
     except Exception as e:
@@ -395,7 +395,7 @@ async def get_keyword_ideas_mcp(
         if keyword_ideas:
             results = []
             for idea in keyword_ideas:
-                competition_value = idea.keyword_idea_metrics.competition.name
+                competition_value = str(idea.keyword_idea_metrics.competition)
                 results.append({
                     "keyword": idea.text,
                     "avg_monthly_searches": idea.keyword_idea_metrics.avg_monthly_searches,
@@ -427,7 +427,7 @@ async def get_keyword_ideas_mcp(
             return "No keyword ideas found."
 
     except GoogleAdsException as ex:
-        error_msg = f"Google Ads API Error: {ex.error.code.name} - {ex.error.message}"
+        error_msg = f"Google Ads API Error: {str(ex.error.code)} - {ex.error.message}"
         logger.error(error_msg)
         return error_msg
     except Exception as e:
@@ -543,7 +543,7 @@ async def get_historical_keyword_data(
         return response
 
     except GoogleAdsException as ex:
-        error_msg = f"Google Ads API Error: {ex.error.code.name} - {ex.error.message}"
+        error_msg = f"Google Ads API Error: {str(ex.error.code)} - {ex.error.message}"
         logger.error(error_msg)
         return error_msg
     except Exception as e:
@@ -651,7 +651,7 @@ async def get_month_over_month_analysis(
         return response
 
     except GoogleAdsException as ex:
-        error_msg = f"Google Ads API Error: {ex.error.code.name} - {ex.error.message}"
+        error_msg = f"Google Ads API Error: {str(ex.error.code)} - {ex.error.message}"
         logger.error(error_msg)
         return error_msg
     except Exception as e:
