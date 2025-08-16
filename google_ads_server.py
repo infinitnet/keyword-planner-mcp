@@ -58,7 +58,8 @@ CREDENTIALS = {
     "use_proto_plus": True,
     "token_uri": "https://oauth2.googleapis.com/token",
 }
-LINKED_CUSTOMER_ID = os.getenv("LINKED_CUSTOMER_ID")
+# Use LOGIN_CUSTOMER_ID consistently throughout
+DEFAULT_CUSTOMER_ID = os.getenv("LOGIN_CUSTOMER_ID")
 
 LOCATION_OPTIONS = {
     # Countries
@@ -406,7 +407,7 @@ async def get_keyword_ideas_mcp(
     if locations is None:
         locations = ["United States"]
 
-    final_customer_id = customer_id if customer_id else LINKED_CUSTOMER_ID
+    final_customer_id = customer_id if customer_id else DEFAULT_CUSTOMER_ID
 
     if not final_customer_id:
         logger.error("No customer ID provided")
@@ -552,7 +553,7 @@ async def get_historical_keyword_data(
     if locations is None:
         locations = ["United States"]
 
-    final_customer_id = customer_id if customer_id else LINKED_CUSTOMER_ID
+    final_customer_id = customer_id if customer_id else DEFAULT_CUSTOMER_ID
 
     if not final_customer_id:
         logger.error("No customer ID provided")
@@ -666,7 +667,7 @@ async def get_month_over_month_analysis(
     if locations is None:
         locations = ["United States"]
 
-    final_customer_id = customer_id if customer_id else LINKED_CUSTOMER_ID
+    final_customer_id = customer_id if customer_id else DEFAULT_CUSTOMER_ID
 
     if not final_customer_id:
         logger.error("No customer ID provided")
@@ -774,7 +775,7 @@ async def get_keyword_search_volumes(
     if locations is None:
         locations = ["United States"]
 
-    final_customer_id = customer_id if customer_id else LINKED_CUSTOMER_ID
+    final_customer_id = customer_id if customer_id else DEFAULT_CUSTOMER_ID
 
     if not final_customer_id:
         logger.error("No customer ID provided")
