@@ -131,47 +131,29 @@ def validate_result_limit(result_limit: int) -> tuple[int, str]:
     return result_limit, ""
 
 def extract_concept_annotation(idea):
-    """Extract semantic concept grouping from keyword annotations"""
+    """Extract actual concept names (like brand names, product types) from KEYWORD_CONCEPT annotation"""
     try:
-        if hasattr(idea, 'keyword_annotations') and idea.keyword_annotations:
-            for annotation in idea.keyword_annotations:
-                if hasattr(annotation, 'concept') and annotation.concept:
-                    return str(annotation.concept).replace('KeywordPlanConceptEnum.', '')
+        if hasattr(idea, 'keyword_annotations') and idea.keyword_annotations is not None:
+            annotations = idea.keyword_annotations
+            
+            # The annotation has a 'concepts' attribute with structured data
+            if hasattr(annotations, 'concepts') and annotations.concepts:
+                concept_names = []
+                for concept in annotations.concepts:
+                    if hasattr(concept, 'name') and concept.name:
+                        concept_names.append(concept.name.strip())
+                
+                if concept_names:
+                    # Return all concept names joined together
+                    return " › ".join(concept_names)
+        
         return "general"
     except Exception as e:
-        logger.debug(f"Error extracting concept annotation: {e}")
+        logger.error(f"Error extracting concept annotation for '{idea.text}': {e}")
         return "general"
 
-def classify_keyword_type(idea):
-    """Classify as brand, competitor, or generic based on annotations"""
-    try:
-        if hasattr(idea, 'keyword_annotations') and idea.keyword_annotations:
-            for annotation in idea.keyword_annotations:
-                # Check for brand terms
-                if hasattr(annotation, 'keyword_plan_keyword_annotation') and annotation.keyword_plan_keyword_annotation:
-                    annotation_type = str(annotation.keyword_plan_keyword_annotation)
-                    if 'BRAND' in annotation_type.upper():
-                        return "brand"
-                    elif 'COMPETITOR' in annotation_type.upper():
-                        return "competitor"
-        return "generic"
-    except Exception as e:
-        logger.debug(f"Error classifying keyword type: {e}")
-        return "generic"
-
-def extract_competitor_annotation(idea):
-    """Extract competitor-related classification"""
-    try:
-        if hasattr(idea, 'keyword_annotations') and idea.keyword_annotations:
-            for annotation in idea.keyword_annotations:
-                if hasattr(annotation, 'keyword_plan_keyword_annotation') and annotation.keyword_plan_keyword_annotation:
-                    annotation_type = str(annotation.keyword_plan_keyword_annotation)
-                    if 'COMPETITOR' in annotation_type.upper():
-                        return True
-        return False
-    except Exception as e:
-        logger.debug(f"Error extracting competitor annotation: {e}")
-        return False
+# Removed classify_keyword_type - redundant since concept groups show actual brand names
+# Removed extract_competitor_annotation - not reliable without brand context
 
 def export_to_csv(df: pd.DataFrame, filename_prefix: str = "keyword_data") -> str:
     """Export DataFrame to CSV format and return as string"""
@@ -223,13 +205,10 @@ def generate_keyword_ideas_core(client, customer_id, location_ids, language_id, 
 
         # Add keyword annotations for SEO-focused clustering and classification
         try:
-            keyword_annotations = [
-                client.get_type("KeywordPlanKeywordAnnotationEnum").KEYWORD_CONCEPT,
-                client.get_type("KeywordPlanKeywordAnnotationEnum").BRAND_TERMS,
-                client.get_type("KeywordPlanKeywordAnnotationEnum").COMPETITOR_TERMS
-            ]
-            request.keyword_annotation.extend(keyword_annotations)
-            logger.debug("Added keyword annotations for concept grouping and brand classification")
+            # Use client.enums approach (cleaner) or nested enum access
+            keyword_concept_enum = client.enums.KeywordPlanKeywordAnnotationEnum.KEYWORD_CONCEPT
+            request.keyword_annotation.append(keyword_concept_enum)
+            logger.debug("Added KEYWORD_CONCEPT annotation for semantic clustering")
         except Exception as e:
             logger.warning(f"Could not add keyword annotations: {e}")
 
@@ -403,11 +382,11 @@ async def get_keyword_ideas_mcp(
     customer_id: Optional[str] = None,
     language_id: Optional[str] = "1000",
     result_limit: Optional[int] = 100,
-    include_brand_classification: Optional[bool] = True,
+    include_concept_grouping: Optional[bool] = True,
     export_csv: Optional[bool] = False
 ) -> str:
     """
-    Generates SEO-focused keyword ideas from Google Ads Keyword Planner with semantic clustering and brand classification.
+    Generates SEO-focused keyword ideas from Google Ads Keyword Planner with semantic clustering.
 
     Args:
         keywords: Comma-separated list of keywords.
@@ -417,7 +396,7 @@ async def get_keyword_ideas_mcp(
         customer_id: Google Ads customer ID.
         language_id: The language ID (default '1000' for English).
         result_limit: Number of top results to return (default is 100).
-        include_brand_classification: Whether to include brand/competitor classification (default True).
+        include_concept_grouping: Whether to include semantic concept grouping (default True).
         export_csv: Whether to include CSV export in response (default False).
 
     Returns:
@@ -463,30 +442,22 @@ async def get_keyword_ideas_mcp(
 
         if keyword_ideas:
             results = []
-            brand_count = 0
-            competitor_count = 0
-            
             for idea in keyword_ideas:
                 competition_value = str(idea.keyword_idea_metrics.competition)
                 
                 # Extract SEO-focused data
-                concept_group = extract_concept_annotation(idea) if include_brand_classification else "general"
-                brand_classification = classify_keyword_type(idea) if include_brand_classification else "generic"
-                is_competitor = extract_competitor_annotation(idea) if include_brand_classification else False
+                concept_group = extract_concept_annotation(idea) if include_concept_grouping else "general"
                 
-                # Count classifications for summary
-                if brand_classification == "brand":
-                    brand_count += 1
-                elif brand_classification == "competitor":
-                    competitor_count += 1
+                # Extract CPC data for commercial value analysis
+                low_cpc = idea.keyword_idea_metrics.low_top_of_page_bid_micros / 1_000_000 if idea.keyword_idea_metrics.low_top_of_page_bid_micros else 0
+                high_cpc = idea.keyword_idea_metrics.high_top_of_page_bid_micros / 1_000_000 if idea.keyword_idea_metrics.high_top_of_page_bid_micros else 0
                 
                 results.append({
                     "keyword": idea.text,
                     "avg_monthly_searches": idea.keyword_idea_metrics.avg_monthly_searches,
-                    "competition": competition_value,
-                    "concept_group": concept_group,
-                    "brand_classification": brand_classification,
-                    "is_competitor_term": is_competitor
+                    "low_cpc": round(low_cpc, 2),
+                    "high_cpc": round(high_cpc, 2),
+                    "concept_group": concept_group
                 })
 
             df = pd.DataFrame(results)
@@ -500,21 +471,39 @@ async def get_keyword_ideas_mcp(
             if competitor_url:
                 response += f"**Competitor Analysis:** {competitor_url}\n"
             response += f"**Total Results:** {len(df_sorted)}\n"
-            
-            if include_brand_classification:
-                generic_count = len(df_sorted) - brand_count - competitor_count
-                response += f"**Brand Terms:** {brand_count} | **Competitor Terms:** {competitor_count} | **Generic Terms:** {generic_count}\n"
+            response += f"**Note:** Semantic concept grouping available via KEYWORD_CONCEPT annotation\n"
             
             response += "\n"
             response += df_sorted.to_markdown(index=False)
             
-            # Add concept grouping summary
-            if include_brand_classification and len(df_sorted) > 0:
+            # Add concept grouping summary with commercial value analysis
+            if include_concept_grouping and len(df_sorted) > 0:
+                # Calculate concept-level CPC insights first
+                concept_cpc_analysis = df_sorted.groupby('concept_group').agg({
+                    'high_cpc': ['mean', 'max'],
+                    'low_cpc': 'mean',
+                    'avg_monthly_searches': 'sum'
+                }).round(2)
+                concept_cpc_analysis.columns = ['avg_high_cpc', 'max_high_cpc', 'avg_low_cpc', 'total_search_volume']
+                
+                # Sort by total search volume descending
+                concept_cpc_analysis = concept_cpc_analysis.sort_values('total_search_volume', ascending=False)
+                
+                # Get keyword counts for each concept
                 concept_summary = df_sorted['concept_group'].value_counts()
-                if len(concept_summary) > 1:
-                    response += f"\n\n### Semantic Concept Groups\n"
-                    for concept, count in concept_summary.items():
-                        response += f"- **{concept}:** {count} keywords\n"
+                
+                response += f"\n\n### Semantic Concept Groups & Commercial Value\n"
+                for concept in concept_cpc_analysis.index:
+                    count = concept_summary[concept]
+                    cpc_data = concept_cpc_analysis.loc[concept]
+                    response += f"- **{concept}:** {count} keywords | Avg CPC: ${cpc_data['avg_high_cpc']:.2f} | Max CPC: ${cpc_data['max_high_cpc']:.2f} | Total Volume: {int(cpc_data['total_search_volume']):,}\n"
+                
+                # Identify highest value concept groups
+                if len(concept_cpc_analysis) > 1:
+                    highest_value_concept = concept_cpc_analysis['avg_high_cpc'].idxmax()
+                    highest_volume_concept = concept_cpc_analysis['total_search_volume'].idxmax()
+                    response += f"\n**Highest Commercial Value:** {highest_value_concept} (${concept_cpc_analysis.loc[highest_value_concept]['avg_high_cpc']:.2f} avg CPC)\n"
+                    response += f"**Highest Search Volume:** {highest_volume_concept} ({int(concept_cpc_analysis.loc[highest_volume_concept]['total_search_volume']):,} total searches)\n"
             
             if export_csv:
                 response += "\n\n## CSV Export\n\n```csv\n"
