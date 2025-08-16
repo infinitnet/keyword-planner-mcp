@@ -127,8 +127,51 @@ def validate_locations(locations: List[str]) -> tuple[List[str], str]:
 def validate_result_limit(result_limit: int) -> tuple[int, str]:
     """Validate result limit parameter"""
     if result_limit < 1 or result_limit > 100:
-        return 20, "Warning: Result limit must be between 1 and 100. Using default value of 20."
+        return 100, "Warning: Result limit must be between 1 and 100. Using default value of 100."
     return result_limit, ""
+
+def extract_concept_annotation(idea):
+    """Extract semantic concept grouping from keyword annotations"""
+    try:
+        if hasattr(idea, 'keyword_annotations') and idea.keyword_annotations:
+            for annotation in idea.keyword_annotations:
+                if hasattr(annotation, 'concept') and annotation.concept:
+                    return str(annotation.concept).replace('KeywordPlanConceptEnum.', '')
+        return "general"
+    except Exception as e:
+        logger.debug(f"Error extracting concept annotation: {e}")
+        return "general"
+
+def classify_keyword_type(idea):
+    """Classify as brand, competitor, or generic based on annotations"""
+    try:
+        if hasattr(idea, 'keyword_annotations') and idea.keyword_annotations:
+            for annotation in idea.keyword_annotations:
+                # Check for brand terms
+                if hasattr(annotation, 'keyword_plan_keyword_annotation') and annotation.keyword_plan_keyword_annotation:
+                    annotation_type = str(annotation.keyword_plan_keyword_annotation)
+                    if 'BRAND' in annotation_type.upper():
+                        return "brand"
+                    elif 'COMPETITOR' in annotation_type.upper():
+                        return "competitor"
+        return "generic"
+    except Exception as e:
+        logger.debug(f"Error classifying keyword type: {e}")
+        return "generic"
+
+def extract_competitor_annotation(idea):
+    """Extract competitor-related classification"""
+    try:
+        if hasattr(idea, 'keyword_annotations') and idea.keyword_annotations:
+            for annotation in idea.keyword_annotations:
+                if hasattr(annotation, 'keyword_plan_keyword_annotation') and annotation.keyword_plan_keyword_annotation:
+                    annotation_type = str(annotation.keyword_plan_keyword_annotation)
+                    if 'COMPETITOR' in annotation_type.upper():
+                        return True
+        return False
+    except Exception as e:
+        logger.debug(f"Error extracting competitor annotation: {e}")
+        return False
 
 def export_to_csv(df: pd.DataFrame, filename_prefix: str = "keyword_data") -> str:
     """Export DataFrame to CSV format and return as string"""
@@ -163,8 +206,8 @@ def map_locations_ids_to_resource_names(client, location_ids):
         logger.error(f"Error mapping location IDs to resource names: {e}")
         raise
 
-def generate_keyword_ideas_core(client, customer_id, location_ids, language_id, keyword_texts, page_url):
-    """Core function to generate keyword ideas"""
+def generate_keyword_ideas_core(client, customer_id, location_ids, language_id, keyword_texts, page_url, competitor_url=None):
+    """Core function to generate keyword ideas with optional competitor analysis"""
     try:
         keyword_plan_idea_service = client.get_service("KeywordPlanIdeaService")
         keyword_plan_network = client.enums.KeywordPlanNetworkEnum.GOOGLE_SEARCH_AND_PARTNERS
@@ -178,16 +221,37 @@ def generate_keyword_ideas_core(client, customer_id, location_ids, language_id, 
         request.include_adult_keywords = False
         request.keyword_plan_network = keyword_plan_network
 
-        if not keyword_texts and page_url:
+        # Add keyword annotations for SEO-focused clustering and classification
+        try:
+            keyword_annotations = [
+                client.get_type("KeywordPlanKeywordAnnotationEnum").KEYWORD_CONCEPT,
+                client.get_type("KeywordPlanKeywordAnnotationEnum").BRAND_TERMS,
+                client.get_type("KeywordPlanKeywordAnnotationEnum").COMPETITOR_TERMS
+            ]
+            request.keyword_annotation.extend(keyword_annotations)
+            logger.debug("Added keyword annotations for concept grouping and brand classification")
+        except Exception as e:
+            logger.warning(f"Could not add keyword annotations: {e}")
+
+        # Handle different seed types including competitor site analysis
+        if competitor_url and not keyword_texts and not page_url:
+            request.site_seed.site = competitor_url
+            logger.info(f"Generating keywords from competitor site: {competitor_url}")
+        elif not keyword_texts and page_url:
             request.url_seed.url = page_url
             logger.info(f"Generating keywords from URL: {page_url}")
-        elif keyword_texts and not page_url:
+        elif keyword_texts and not page_url and not competitor_url:
             request.keyword_seed.keywords.extend(keyword_texts)
             logger.info(f"Generating keywords from seed keywords: {keyword_texts}")
         elif keyword_texts and page_url:
             request.keyword_and_url_seed.url = page_url
             request.keyword_and_url_seed.keywords.extend(keyword_texts)
             logger.info(f"Generating keywords from both URL and seed keywords")
+        elif keyword_texts and competitor_url:
+            # Combine keywords with competitor site analysis
+            request.keyword_and_url_seed.url = competitor_url
+            request.keyword_and_url_seed.keywords.extend(keyword_texts)
+            logger.info(f"Generating keywords from both competitor site and seed keywords")
 
         keyword_ideas = keyword_plan_idea_service.generate_keyword_ideas(request=request)
         logger.info("Successfully generated keyword ideas")
@@ -334,26 +398,30 @@ def clean_historical_data(historical_response):
 async def get_keyword_ideas_mcp(
     keywords: Optional[str] = "",
     page_url: Optional[str] = "",
+    competitor_url: Optional[str] = "",
     locations: Optional[List[str]] = None,
     customer_id: Optional[str] = None,
     language_id: Optional[str] = "1000",
-    result_limit: Optional[int] = 20,
+    result_limit: Optional[int] = 100,
+    include_brand_classification: Optional[bool] = True,
     export_csv: Optional[bool] = False
 ) -> str:
     """
-    Generates keyword ideas from Google Ads Keyword Planner.
+    Generates SEO-focused keyword ideas from Google Ads Keyword Planner with semantic clustering and brand classification.
 
     Args:
         keywords: Comma-separated list of keywords.
         page_url: A URL to generate keyword ideas from.
+        competitor_url: A competitor website URL to analyze for keyword opportunities (optional).
         locations: A list of location names to target.
         customer_id: Google Ads customer ID.
         language_id: The language ID (default '1000' for English).
-        result_limit: Number of top results to return (default is 20).
+        result_limit: Number of top results to return (default is 100).
+        include_brand_classification: Whether to include brand/competitor classification (default True).
         export_csv: Whether to include CSV export in response (default False).
 
     Returns:
-        Markdown string with keyword data or an error message.
+        Markdown string with SEO-focused keyword data or an error message.
     """
     # Set default location to United States
     if locations is None:
@@ -367,8 +435,8 @@ async def get_keyword_ideas_mcp(
 
     # Validate and sanitize inputs
     keyword_texts_list = sanitize_keywords(keywords)
-    if not keyword_texts_list and not page_url:
-        return "Error: Either keywords or page_url must be provided."
+    if not keyword_texts_list and not page_url and not competitor_url:
+        return "Error: At least one of keywords, page_url, or competitor_url must be provided."
 
     # Validate locations
     selected_location_ids, location_error = validate_locations(locations)
@@ -390,37 +458,70 @@ async def get_keyword_ideas_mcp(
             language_id,
             keyword_texts_list,
             page_url,
+            competitor_url
         )
 
         if keyword_ideas:
             results = []
+            brand_count = 0
+            competitor_count = 0
+            
             for idea in keyword_ideas:
                 competition_value = str(idea.keyword_idea_metrics.competition)
+                
+                # Extract SEO-focused data
+                concept_group = extract_concept_annotation(idea) if include_brand_classification else "general"
+                brand_classification = classify_keyword_type(idea) if include_brand_classification else "generic"
+                is_competitor = extract_competitor_annotation(idea) if include_brand_classification else False
+                
+                # Count classifications for summary
+                if brand_classification == "brand":
+                    brand_count += 1
+                elif brand_classification == "competitor":
+                    competitor_count += 1
+                
                 results.append({
                     "keyword": idea.text,
                     "avg_monthly_searches": idea.keyword_idea_metrics.avg_monthly_searches,
                     "competition": competition_value,
-                    "low_top_of_page_bid_micros": idea.keyword_idea_metrics.low_top_of_page_bid_micros,
-                    "high_top_of_page_bid_micros": idea.keyword_idea_metrics.high_top_of_page_bid_micros
+                    "concept_group": concept_group,
+                    "brand_classification": brand_classification,
+                    "is_competitor_term": is_competitor
                 })
 
             df = pd.DataFrame(results)
             df_sorted = df.sort_values(by="avg_monthly_searches", ascending=False).head(result_limit)
             
-            response = f"## Keyword Ideas Results\n\n"
+            response = f"## SEO Keyword Ideas Results\n\n"
             if limit_warning:
                 response += f"**{limit_warning}**\n\n"
             
             response += f"**Locations:** {', '.join(locations)}\n"
-            response += f"**Total Results:** {len(df_sorted)}\n\n"
+            if competitor_url:
+                response += f"**Competitor Analysis:** {competitor_url}\n"
+            response += f"**Total Results:** {len(df_sorted)}\n"
+            
+            if include_brand_classification:
+                generic_count = len(df_sorted) - brand_count - competitor_count
+                response += f"**Brand Terms:** {brand_count} | **Competitor Terms:** {competitor_count} | **Generic Terms:** {generic_count}\n"
+            
+            response += "\n"
             response += df_sorted.to_markdown(index=False)
+            
+            # Add concept grouping summary
+            if include_brand_classification and len(df_sorted) > 0:
+                concept_summary = df_sorted['concept_group'].value_counts()
+                if len(concept_summary) > 1:
+                    response += f"\n\n### Semantic Concept Groups\n"
+                    for concept, count in concept_summary.items():
+                        response += f"- **{concept}:** {count} keywords\n"
             
             if export_csv:
                 response += "\n\n## CSV Export\n\n```csv\n"
-                response += export_to_csv(df_sorted, "keyword_ideas")
+                response += export_to_csv(df_sorted, "seo_keyword_ideas")
                 response += "\n```"
             
-            logger.info(f"Successfully returned {len(df_sorted)} keyword ideas")
+            logger.info(f"Successfully returned {len(df_sorted)} SEO-focused keyword ideas")
             return response
         else:
             logger.warning("No keyword ideas found")
